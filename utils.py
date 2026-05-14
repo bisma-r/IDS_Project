@@ -10,11 +10,13 @@ import numpy as np
 from ultralytics import YOLO
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
-YOLO_MODEL        = "yolov8n.pt"
-WINDOW_SEC        = 5
-FRAME_SKIP        = 10
-IMG_SIZE          = 640
-PENALTY_SPOT_NORM = np.array([0.5, 0.88])
+YOLO_MODEL         = "yolov8n.pt"
+WINDOW_SEC         = 5
+FRAME_SKIP         = 10
+IMG_SIZE           = 640
+PENALTY_SPOTS_NORM = np.array([[0.5, 0.12], [0.5, 0.88]])
+FIELD_CORNERS_NORM = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+FIELD_CENTER_NORM  = np.array([0.5, 0.5])
 
 FEATURE_COLS = [
     "clustering_mid",
@@ -22,6 +24,9 @@ FEATURE_COLS = [
     "wall_index_mid",
     "players_in_box_mid",
     "ball_in_box_mid",
+    "ball_dist_center_mid",
+    "ball_dist_corner_mid",
+    "ball_dist_sideline_mid",
     "optical_flow",
     "temporal_delta",
     "ball_detected_ratio",
@@ -31,6 +36,9 @@ FEATURE_COLS = [
     "mean_clustering",
     "mean_players_in_box",
     "mean_ball_in_box",
+    "mean_ball_dist_center",
+    "mean_ball_dist_corner",
+    "mean_ball_dist_sideline",
 ]
 # ───────────────────────────────────────────────────────────────────────────────
 
@@ -75,7 +83,29 @@ def player_clustering_score(players):
 def ball_distance_to_penalty_spot(ball):
     if ball is None:
         return 1.0
-    return float(np.linalg.norm(centre(ball) - PENALTY_SPOT_NORM))
+    bc = centre(ball)
+    return float(np.min(np.linalg.norm(PENALTY_SPOTS_NORM - bc, axis=1)))
+
+
+def ball_distance_to_center(ball):
+    if ball is None:
+        return 1.0
+    return float(np.linalg.norm(centre(ball) - FIELD_CENTER_NORM))
+
+
+def ball_distance_to_corner(ball):
+    if ball is None:
+        return 1.0
+    bc = centre(ball)
+    return float(np.min(np.linalg.norm(FIELD_CORNERS_NORM - bc, axis=1)))
+
+
+def ball_distance_to_sideline(ball):
+    """Throw-ins occur at the touchlines which appear as horizontal edges in broadcast."""
+    if ball is None:
+        return 0.5
+    bc = centre(ball)
+    return float(min(bc[1], 1.0 - bc[1]))
 
 
 def wall_formation_index(players, ball, tolerance=0.05):
@@ -145,18 +175,24 @@ def compute_features(frames, detections):
     ball_snap    = snap["ball"]
 
     return {
-        "clustering_mid":      player_clustering_score(players_snap),
-        "ball_dist_spot_mid":  ball_distance_to_penalty_spot(ball_snap),
-        "wall_index_mid":      wall_formation_index(players_snap, ball_snap),
-        "players_in_box_mid":  penalty_area_player_count(players_snap),
-        "ball_in_box_mid":     ball_in_penalty_area(ball_snap),
-        "optical_flow":        optical_flow_magnitude(frames),
-        "temporal_delta":      temporal_delta(detections),
-        "ball_detected_ratio": ball_detected_ratio(detections),
-        "avg_player_count":    avg_player_count(detections),
-        "mean_wall_index":     float(np.mean([wall_formation_index(d["players"], d["ball"]) for d in detections])),
-        "mean_ball_dist_spot": float(np.mean([ball_distance_to_penalty_spot(d["ball"]) for d in detections])),
-        "mean_clustering":     float(np.mean([player_clustering_score(d["players"]) for d in detections])),
-        "mean_players_in_box": float(np.mean([penalty_area_player_count(d["players"]) for d in detections])),
-        "mean_ball_in_box":    float(np.mean([ball_in_penalty_area(d["ball"]) for d in detections])),
+        "clustering_mid":         player_clustering_score(players_snap),
+        "ball_dist_spot_mid":     ball_distance_to_penalty_spot(ball_snap),
+        "wall_index_mid":         wall_formation_index(players_snap, ball_snap),
+        "players_in_box_mid":     penalty_area_player_count(players_snap),
+        "ball_in_box_mid":        ball_in_penalty_area(ball_snap),
+        "ball_dist_center_mid":   ball_distance_to_center(ball_snap),
+        "ball_dist_corner_mid":   ball_distance_to_corner(ball_snap),
+        "ball_dist_sideline_mid": ball_distance_to_sideline(ball_snap),
+        "optical_flow":           optical_flow_magnitude(frames),
+        "temporal_delta":         temporal_delta(detections),
+        "ball_detected_ratio":    ball_detected_ratio(detections),
+        "avg_player_count":       avg_player_count(detections),
+        "mean_wall_index":        float(np.mean([wall_formation_index(d["players"], d["ball"]) for d in detections])),
+        "mean_ball_dist_spot":    float(np.mean([ball_distance_to_penalty_spot(d["ball"]) for d in detections])),
+        "mean_clustering":        float(np.mean([player_clustering_score(d["players"]) for d in detections])),
+        "mean_players_in_box":    float(np.mean([penalty_area_player_count(d["players"]) for d in detections])),
+        "mean_ball_in_box":       float(np.mean([ball_in_penalty_area(d["ball"]) for d in detections])),
+        "mean_ball_dist_center":  float(np.mean([ball_distance_to_center(d["ball"]) for d in detections])),
+        "mean_ball_dist_corner":  float(np.mean([ball_distance_to_corner(d["ball"]) for d in detections])),
+        "mean_ball_dist_sideline":float(np.mean([ball_distance_to_sideline(d["ball"]) for d in detections])),
     }
